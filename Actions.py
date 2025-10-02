@@ -4,6 +4,8 @@ from datetime import datetime
 import time
 import platform
 import sys
+import cv2
+import numpy as np
 try:
     import pygetwindow as gw
 except Exception:
@@ -51,6 +53,10 @@ class Actions:
                         # Use window geometry
                         left, top, width, height = win.left, win.top, win.width, win.height
                         self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT = left, top, width, height
+                        try:
+                            win.activate()
+                        except Exception:
+                            pass
                         # Field area: central portion
                         self.TOP_LEFT_X = left + int(0.05 * width)
                         self.TOP_LEFT_Y = top + int(0.12 * height)
@@ -403,4 +409,99 @@ class Actions:
                     return True
             except Exception as e:
                 print(f"Error locating matchover.png: {e}")
+        return False
+
+    # ======== Computer-vision helpers (no manual coordinates) ========
+    def _window_region_box(self, rel_left: float, rel_top: float, rel_w: float, rel_h: float):
+        """Compute absolute region box from relative ratios inside the BlueStacks window.
+        Returns (left, top, width, height). Falls back to None if window size unknown.
+        """
+        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            left = self.WIN_LEFT + int(rel_left * self.WIN_WIDTH)
+            top = self.WIN_TOP + int(rel_top * self.WIN_HEIGHT)
+            width = int(rel_w * self.WIN_WIDTH)
+            height = int(rel_h * self.WIN_HEIGHT)
+            return (left, top, width, height)
+        return None
+
+    def _grab_region(self, region=None):
+        """Screenshot region into numpy BGR image for OpenCV. Region=(left, top, width, height)."""
+        if region is None:
+            img = pyautogui.screenshot()
+        else:
+            l, t, w, h = region
+            img = pyautogui.screenshot(region=(l, t, w, h))
+        img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        return img
+
+    def _match_template_multiscale(self, haystack_bgr: np.ndarray, template_path: str, 
+                                    method=cv2.TM_CCOEFF_NORMED, scales=(0.85, 1.0, 1.15), threshold=0.75):
+        """Return best match (max_val, (center_x, center_y)) in absolute coords of the given haystack region image.
+        If not found, return (None, None).
+        """
+        if not os.path.exists(template_path):
+            print(f"Template not found: {template_path}")
+            return (None, None)
+        tpl = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+        if tpl is None:
+            print(f"Failed to read template: {template_path}")
+            return (None, None)
+        haystack_gray = cv2.cvtColor(haystack_bgr, cv2.COLOR_BGR2GRAY)
+        best = (0.0, None)
+        for s in scales:
+            try:
+                new_w = max(1, int(tpl.shape[1] * s))
+                new_h = max(1, int(tpl.shape[0] * s))
+                tpl_s = cv2.resize(tpl, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                res = cv2.matchTemplate(haystack_gray, tpl_s, method)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                if max_val > best[0]:
+                    best = (max_val, (max_loc[0] + new_w // 2, max_loc[1] + new_h // 2))
+            except Exception:
+                continue
+        if best[0] >= threshold and best[1] is not None:
+            return best
+        return (None, None)
+
+    def _find_and_click_template(self, template_filename: str, 
+                                 primary_rel_region=(0.35, 0.75, 0.30, 0.20),
+                                 threshold=0.78,
+                                 allow_fullscreen=True):
+        """Try to find template in a primary window-relative region first, then in full window if enabled.
+        Clicks the center if found. Returns True if clicked.
+        """
+        # 1) Focus window if possible
+        if gw is not None:
+            try:
+                window_title = os.getenv('WINDOW_TITLE') or 'BlueStacks'
+                win = next((w for w in gw.getWindowsWithTitle(window_title) if w.width > 0 and not w.isMinimized), None)
+                if win:
+                    win.activate()
+            except Exception:
+                pass
+
+        # 2) Try primary region
+        tpl_path = os.path.join(self.images_folder, template_filename)
+        region = self._window_region_box(*primary_rel_region)
+        if region is not None:
+            img = self._grab_region(region)
+            score, center = self._match_template_multiscale(img, tpl_path, threshold=threshold)
+            if score is not None and center is not None:
+                x = region[0] + center[0]
+                y = region[1] + center[1]
+                pyautogui.moveTo(x, y, duration=0.15)
+                pyautogui.click()
+                return True
+
+        # 3) Try full window
+        if allow_fullscreen and all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            full_region = (self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT)
+            img = self._grab_region(full_region)
+            score, center = self._match_template_multiscale(img, tpl_path, threshold=threshold)
+            if score is not None and center is not None:
+                x = full_region[0] + center[0]
+                y = full_region[1] + center[1]
+                pyautogui.moveTo(x, y, duration=0.15)
+                pyautogui.click()
+                return True
         return False
