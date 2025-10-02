@@ -159,6 +159,49 @@ class ClashRoyaleEnv:
         next_state = self._get_state()
         return next_state, reward, done
 
+    def get_action_mask(self, state):
+        """Return a boolean mask of shape [action_size] for valid actions.
+        Rules:
+        - If match over detected: only allow no-op
+        - Disallow playing cards that are Unknown
+        - Rough elixir gating: require at least 2 elixir to play any card (fallback until per-card costs available)
+        - Always allow no-op
+        """
+        import numpy as _np
+        mask = _np.zeros(self.action_size, dtype=bool)
+        # Always allow no-op
+        noop_index = self.action_size - 1
+        mask[noop_index] = True
+
+        # During match over only no-op
+        if self.match_over_detected:
+            return mask
+
+        try:
+            cards = self.detect_cards_in_hand()
+        except Exception:
+            cards = []
+
+        # If detection failed, be conservative
+        if not cards or all(c == "Unknown" for c in cards):
+            return mask
+
+        elixir = self.actions.count_elixir()
+        min_elixir_to_play = 2  # coarse threshold until we wire per-card costs
+
+        playable_card_slots = set()
+        if elixir >= min_elixir_to_play:
+            for i, name in enumerate(cards):
+                if i < self.num_cards and name != "Unknown":
+                    playable_card_slots.add(i)
+
+        # Set mask for all actions that use playable cards
+        for idx, (card_idx, _xf, _yf) in enumerate(self.available_actions[:-1]):
+            if card_idx in playable_card_slots:
+                mask[idx] = True
+
+        return mask
+
     def _get_state(self):
         self.actions.capture_area(self.screenshot_path)
         elixir = self.actions.count_elixir()

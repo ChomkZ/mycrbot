@@ -64,8 +64,12 @@ def train():
         total_reward = 0
         done = False
         while not done:
-            # Optional action mask hook (future): compute mask from env if available
-            action = agent.act(state)
+            # Action mask for invalid moves (insufficient elixir, unknown cards, match over)
+            try:
+                mask = env.get_action_mask(state)
+            except Exception:
+                mask = None
+            action = agent.act(state, action_mask=mask)
             next_state, reward, done = env.step(action)
             agent.remember(state, action, reward, next_state, done)
             agent.replay(batch_size)
