@@ -30,6 +30,13 @@ class Actions:
                 print("DPI awareness enabled")
             except Exception as e:
                 print(f"Failed to enable DPI awareness: {e}")
+        # Make pyautogui faster and avoid failsafe aborts on corner hits
+        try:
+            pyautogui.FAILSAFE = False
+            pause = float(os.getenv('PYAUTO_PAUSE', '0.03'))
+            pyautogui.PAUSE = pause
+        except Exception:
+            pass
 
         # Define screen regions based on OS
         if self.os_type == "Darwin":  # macOS
@@ -226,19 +233,65 @@ class Actions:
             for idx, card in enumerate(sorted_cards)
         }
 
+    def _clamp_to_field(self, x, y):
+        """Clamp a point inside the detected field area to avoid drops outside bounds."""
+        if all(v is not None for v in [self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y]):
+            x = max(self.TOP_LEFT_X + 5, min(x, self.BOTTOM_RIGHT_X - 5))
+            y = max(self.TOP_LEFT_Y + 5, min(y, self.BOTTOM_RIGHT_Y - 5))
+        return x, y
+
+    def _card_slot_center(self, card_index: int):
+        """Return screen coordinates of the center of the given card slot (0..3)."""
+        slot_w = max(1, int(self.CARD_BAR_WIDTH // 4))
+        cx = self.CARD_BAR_X + card_index * slot_w + slot_w // 2
+        cy = self.CARD_BAR_Y + self.CARD_BAR_HEIGHT // 2
+        return cx, cy
+
     def card_play(self, x, y, card_index):
-        print(f"Playing card {card_index} at position ({x}, {y})")
-        if card_index in self.card_keys:
-            key = self.card_keys[card_index]
-            print(f"Pressing key: {key}")
-            pyautogui.press(key)
-            time.sleep(0.2)
-            print(f"Moving mouse to: ({x}, {y})")
-            pyautogui.moveTo(x, y, duration=0.2)
-            print("Clicking")
+        print(f"Playing card {card_index} to ({x}, {y})")
+        # Ensure target is inside the field
+        x, y = self._clamp_to_field(x, y)
+
+        mode = (os.getenv('PLACEMENT_MODE') or 'drag').lower()  # 'drag' (default) or 'tap'
+
+        # Compute card slot center for drag start
+        try:
+            slot_cx, slot_cy = self._card_slot_center(card_index)
+        except Exception as e:
+            print(f"Failed to get slot center for card_index={card_index}: {e}")
+            slot_cx = self.CARD_BAR_X + self.CARD_BAR_WIDTH // 2
+            slot_cy = self.CARD_BAR_Y + self.CARD_BAR_HEIGHT // 2
+
+        def do_drag():
+            # Drag from the card slot position to the target on the field
+            print(f"Dragging from slot ({slot_cx}, {slot_cy}) to ({x}, {y})")
+            pyautogui.moveTo(slot_cx, slot_cy, duration=0.12)
+            pyautogui.mouseDown()
+            pyautogui.dragTo(x, y, duration=0.20)
+            pyautogui.mouseUp()
+            time.sleep(0.05)
+
+        def do_tap():
+            # Select by hotkey then tap on field
+            if card_index in self.card_keys:
+                key = self.card_keys[card_index]
+                print(f"Selecting card via key: {key}")
+                pyautogui.press(key)
+                time.sleep(0.08)
+            print(f"Clicking field at ({x}, {y})")
+            pyautogui.moveTo(x, y, duration=0.10)
             pyautogui.click()
-        else:
-            print(f"Invalid card index: {card_index}")
+            time.sleep(0.04)
+
+        try:
+            if mode == 'tap':
+                do_tap()
+            else:
+                # Default: try drag; if fails, fallback to tap
+                do_drag()
+        except Exception as e:
+            print(f"Drag placement failed with error: {e}; falling back to tap")
+            do_tap()
 
     def click_battle_start(self):
         """Find and click the Battle button with robust regioning and overrides.
