@@ -257,38 +257,17 @@ class Actions:
         except Exception:
             pass
 
-        button_image = os.path.join(self.images_folder, "battlestartbutton.png")
-        confidences = [0.85, 0.8, 0.75, 0.7, 0.65]
-
-        # 2) Compute a likely region near bottom-center of BlueStacks window
-        region = None
-        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
-            left = self.WIN_LEFT + int(0.35 * self.WIN_WIDTH)
-            top = self.WIN_TOP + int(0.78 * self.WIN_HEIGHT)
-            width = int(0.30 * self.WIN_WIDTH)
-            height = int(0.18 * self.WIN_HEIGHT)
-            region = (left, top, width, height)
-        # Allow full-screen search via env override
-        if os.getenv('SEARCH_FULL_SCREEN', '0') == '1':
-            region = None
-
-        # 3) Try to locate the button in the region (or full screen)
-        for confidence in confidences:
-            print(f"Looking for battle start button (confidence: {confidence}) in region={region}")
-            try:
-                location = pyautogui.locateOnScreen(
-                    button_image,
-                    confidence=confidence,
-                    region=region
-                )
-                if location:
-                    x, y = pyautogui.center(location)
-                    print(f"Found battle start button at ({x}, {y})")
-                    pyautogui.moveTo(x, y, duration=0.2)
-                    pyautogui.click()
-                    return True
-            except Exception as e:
-                print(f"Error during locateOnScreen: {e}")
+        # 2) CV-based multiscale template search (window-relative region, fallback to full window)
+        primary_region = (0.35, 0.78, 0.30, 0.18)
+        threshold = float(os.getenv('BATTLE_TM_THRESHOLD', '0.78'))
+        clicked = self._find_and_click_template(
+            'battlestartbutton.png',
+            primary_rel_region=primary_region,
+            threshold=threshold,
+            allow_fullscreen=(os.getenv('SEARCH_FULL_SCREEN', '0') == '1')
+        )
+        if clicked:
+            return True
 
         # 4) Fallback: click approximate bottom-center of window to attempt to focus/start
         print("Battle button not found. Clicking approximate bottom-center to clear/focus...")
@@ -365,34 +344,16 @@ class Actions:
         except Exception:
             pass
 
-        ok_img = os.path.join(self.images_folder, "okbutton.png")
-        confidences = [0.9, 0.85, 0.8, 0.75]
-
-        # Region near bottom-center of window
-        region = None
-        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
-            left = self.WIN_LEFT + int(0.35 * self.WIN_WIDTH)
-            top = self.WIN_TOP + int(0.75 * self.WIN_HEIGHT)
-            width = int(0.30 * self.WIN_WIDTH)
-            height = int(0.20 * self.WIN_HEIGHT)
-            region = (left, top, width, height)
-        if os.getenv('SEARCH_FULL_SCREEN', '0') == '1':
-            region = None
-
-        for conf in confidences:
-            print(f"Looking for OK button (confidence: {conf}) in region={region}")
-            try:
-                loc = pyautogui.locateOnScreen(ok_img, confidence=conf, region=region)
-                if loc:
-                    x, y = pyautogui.center(loc)
-                    print(f"Found OK button at ({x}, {y})")
-                    pyautogui.moveTo(x, y, duration=0.2)
-                    pyautogui.click()
-                    time.sleep(0.5)
-                    return True
-            except Exception as e:
-                print(f"Error locating OK button: {e}")
-        return False
+        # 2) CV-based multiscale search for OK button
+        primary_region = (0.35, 0.75, 0.30, 0.20)
+        threshold = float(os.getenv('OK_TM_THRESHOLD', '0.80'))
+        clicked = self._find_and_click_template(
+            'okbutton.png',
+            primary_rel_region=primary_region,
+            threshold=threshold,
+            allow_fullscreen=(os.getenv('SEARCH_FULL_SCREEN', '0') == '1')
+        )
+        return bool(clicked)
 
     def detect_match_over(self):
         matchover_img = os.path.join(self.images_folder, "matchover.png")
