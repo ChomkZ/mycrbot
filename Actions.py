@@ -13,6 +13,11 @@ class Actions:
         self.os_type = platform.system()
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.images_folder = os.path.join(self.script_dir, 'main_images')
+        # Window geometry (filled during calibration on Windows)
+        self.WIN_LEFT = None
+        self.WIN_TOP = None
+        self.WIN_WIDTH = None
+        self.WIN_HEIGHT = None
 
         # Define screen regions based on OS
         if self.os_type == "Darwin":  # macOS
@@ -34,6 +39,7 @@ class Actions:
                     if win is not None:
                         # Use window geometry
                         left, top, width, height = win.left, win.top, win.width, win.height
+                        self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT = left, top, width, height
                         # Field area: central portion
                         self.TOP_LEFT_X = left + int(0.05 * width)
                         self.TOP_LEFT_Y = top + int(0.12 * height)
@@ -68,6 +74,12 @@ class Actions:
                 self.CARD_BAR_Y = 847
                 self.CARD_BAR_WIDTH = 1862 - 1450
                 self.CARD_BAR_HEIGHT = 971 - 847
+
+                # Roughly infer window geometry from field/card bar (best-effort)
+                self.WIN_LEFT = self.TOP_LEFT_X - int(0.05 * self.WIDTH)
+                self.WIN_TOP = self.TOP_LEFT_Y - int(0.12 * self.HEIGHT)
+                self.WIN_WIDTH = int(self.WIDTH / 0.90)
+                self.WIN_HEIGHT = int(self.HEIGHT / 0.68)
 
         # Card position to key mapping
         self.card_keys = {
@@ -185,48 +197,77 @@ class Actions:
             print(f"Invalid card index: {card_index}")
 
     def click_battle_start(self):
+        """Find and click the Battle button with robust regioning and overrides.
+        Supports manual override via .env: BATTLE_BUTTON_X, BATTLE_BUTTON_Y
+        """
+        # 1) Manual override from environment
+        try:
+            bx = os.getenv("BATTLE_BUTTON_X")
+            by = os.getenv("BATTLE_BUTTON_Y")
+            if bx and by:
+                x, y = int(bx), int(by)
+                print(f"Clicking Battle via override at ({x}, {y})")
+                pyautogui.moveTo(x, y, duration=0.2)
+                pyautogui.click()
+                return True
+        except Exception:
+            pass
+
         button_image = os.path.join(self.images_folder, "battlestartbutton.png")
-        confidences = [0.8, 0.7, 0.6, 0.5]  # Try multiple confidence levels
+        confidences = [0.85, 0.8, 0.75, 0.7, 0.65]
 
-        # Define the region (left, top, width, height) for the correct battle button
-        battle_button_region = (1486, 755, 1730-1486, 900-755)
+        # 2) Compute a likely region near bottom-center of BlueStacks window
+        region = None
+        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            left = self.WIN_LEFT + int(0.35 * self.WIN_WIDTH)
+            top = self.WIN_TOP + int(0.78 * self.WIN_HEIGHT)
+            width = int(0.30 * self.WIN_WIDTH)
+            height = int(0.18 * self.WIN_HEIGHT)
+            region = (left, top, width, height)
 
-        while True:
-            for confidence in confidences:
-                print(f"Looking for battle start button (confidence: {confidence})")
-                try:
-                    location = pyautogui.locateOnScreen(
-                        button_image,
-                        confidence=confidence,
-                        region=battle_button_region  # Only search in this region
-                    )
-                    if location:
-                        x, y = pyautogui.center(location)
-                        print(f"Found battle start button at ({x}, {y})")
-                        pyautogui.moveTo(x, y, duration=0.2)
-                        pyautogui.click()
-                        return True
-                except:
-                    pass
+        # 3) Try to locate the button in the region (or full screen)
+        for confidence in confidences:
+            print(f"Looking for battle start button (confidence: {confidence}) in region={region}")
+            try:
+                location = pyautogui.locateOnScreen(
+                    button_image,
+                    confidence=confidence,
+                    region=region
+                )
+                if location:
+                    x, y = pyautogui.center(location)
+                    print(f"Found battle start button at ({x}, {y})")
+                    pyautogui.moveTo(x, y, duration=0.2)
+                    pyautogui.click()
+                    return True
+            except Exception as e:
+                print(f"Error during locateOnScreen: {e}")
 
-            # If button not found, click to clear screens
-            print("Button not found, clicking to clear screens...")
-            pyautogui.moveTo(1705, 331, duration=0.2)
-            pyautogui.click()
-            time.sleep(1)
+        # 4) Fallback: click approximate bottom-center of window to attempt to focus/start
+        print("Battle button not found. Clicking approximate bottom-center to clear/focus...")
+        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            x = self.WIN_LEFT + self.WIN_WIDTH // 2
+            y = self.WIN_TOP + int(0.88 * self.WIN_HEIGHT)
+        else:
+            # Final fallback: a safe center-ish click
+            x, y = 1600, 900
+        pyautogui.moveTo(x, y, duration=0.2)
+        pyautogui.click()
+        time.sleep(1)
+        return False
 
     def detect_game_end(self):
         try:
             winner_img = os.path.join(self.images_folder, "Winner.png")
             confidences = [0.8, 0.7, 0.6]
 
+            # Default region near top-middle where 'Winner' text usually appears
             winner_region = (1510, 121, 1678-1510, 574-121)
 
+            result = None
             for confidence in confidences:
                 print(f"\nTrying detection with confidence: {confidence}")
                 winner_location = None
-
-                # Try to find Winner in region
                 try:
                     winner_location = pyautogui.locateOnScreen(
                         winner_img, confidence=confidence, grayscale=True, region=winner_region
@@ -238,16 +279,71 @@ class Actions:
                     _, y = pyautogui.center(winner_location)
                     print(f"Found 'Winner' at y={y} with confidence {confidence}")
                     result = "victory" if y > 402 else "defeat"
-                    time.sleep(3)
-                    # Click the "Play Again" button at a fixed coordinate (adjust as needed)
-                    play_again_x, play_again_y = 1522, 913  # Example coordinates
-                    print(f"Clicking Play Again at ({play_again_x}, {play_again_y})")
-                    pyautogui.moveTo(play_again_x, play_again_y, duration=0.2)
-                    pyautogui.click()
-                    return result
+                    break
+
+            # Whether or not we classified result, try to click the OK button to continue
+            if self.click_ok_button():
+                print("OK button clicked after match end")
+            else:
+                print("OK button not found; attempting fallback click")
+                # Fallback bottom-center click
+                if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+                    x = self.WIN_LEFT + self.WIN_WIDTH // 2
+                    y = self.WIN_TOP + int(0.88 * self.WIN_HEIGHT)
+                else:
+                    x, y = 1600, 900
+                pyautogui.moveTo(x, y, duration=0.2)
+                pyautogui.click()
+
+            return result or "done"
         except Exception as e:
             print(f"Error in game end detection: {str(e)}")
         return None
+
+    def click_ok_button(self):
+        """Find and click the OK button at end of match.
+        Supports .env override: OK_BUTTON_X, OK_BUTTON_Y
+        Returns True if a click was performed.
+        """
+        # 1) Manual override from environment
+        try:
+            ox = os.getenv("OK_BUTTON_X")
+            oy = os.getenv("OK_BUTTON_Y")
+            if ox and oy:
+                x, y = int(ox), int(oy)
+                print(f"Clicking OK via override at ({x}, {y})")
+                pyautogui.moveTo(x, y, duration=0.2)
+                pyautogui.click()
+                return True
+        except Exception:
+            pass
+
+        ok_img = os.path.join(self.images_folder, "okbutton.png")
+        confidences = [0.9, 0.85, 0.8, 0.75]
+
+        # Region near bottom-center of window
+        region = None
+        if all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            left = self.WIN_LEFT + int(0.35 * self.WIN_WIDTH)
+            top = self.WIN_TOP + int(0.75 * self.WIN_HEIGHT)
+            width = int(0.30 * self.WIN_WIDTH)
+            height = int(0.20 * self.WIN_HEIGHT)
+            region = (left, top, width, height)
+
+        for conf in confidences:
+            print(f"Looking for OK button (confidence: {conf}) in region={region}")
+            try:
+                loc = pyautogui.locateOnScreen(ok_img, confidence=conf, region=region)
+                if loc:
+                    x, y = pyautogui.center(loc)
+                    print(f"Found OK button at ({x}, {y})")
+                    pyautogui.moveTo(x, y, duration=0.2)
+                    pyautogui.click()
+                    time.sleep(0.5)
+                    return True
+            except Exception as e:
+                print(f"Error locating OK button: {e}")
+        return False
 
     def detect_match_over(self):
         matchover_img = os.path.join(self.images_folder, "matchover.png")
