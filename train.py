@@ -64,6 +64,7 @@ def train():
         total_reward = 0
         done = False
         while not done:
+            # Optional action mask hook (future): compute mask from env if available
             action = agent.act(state)
             next_state, reward, done = env.step(action)
             agent.remember(state, action, reward, next_state, done)
