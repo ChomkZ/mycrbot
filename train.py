@@ -72,7 +72,7 @@ def train():
             action = agent.act(state, action_mask=mask)
             next_state, reward, done = env.step(action)
             agent.remember(state, action, reward, next_state, done)
-            agent.replay(batch_size)
+            loss = agent.replay(batch_size)
             state = next_state
             total_reward += reward
         print(f"Episode {ep + 1}: Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")

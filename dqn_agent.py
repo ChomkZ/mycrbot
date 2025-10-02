@@ -181,6 +181,8 @@ class DQNAgent:
         if self.train_step % self.target_update_interval == 0:
             self.update_target_model()
 
+        return float(loss.item())
+
     def load(self, filename):
         path = filename
         if not os.path.isabs(filename):
