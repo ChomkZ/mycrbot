@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 import time
 import platform
+import sys
 try:
     import pygetwindow as gw
 except Exception:
@@ -19,6 +20,15 @@ class Actions:
         self.WIN_WIDTH = None
         self.WIN_HEIGHT = None
 
+        # Try to enable DPI awareness on Windows to avoid coordinate scaling issues
+        if self.os_type == "Windows":
+            try:
+                import ctypes
+                ctypes.windll.user32.SetProcessDPIAware()
+                print("DPI awareness enabled")
+            except Exception as e:
+                print(f"Failed to enable DPI awareness: {e}")
+
         # Define screen regions based on OS
         if self.os_type == "Darwin":  # macOS
             self.TOP_LEFT_X = 1013
@@ -34,7 +44,8 @@ class Actions:
             calibrated = False
             if gw is not None:
                 try:
-                    candidates = gw.getWindowsWithTitle('BlueStacks')
+                    window_title = os.getenv('WINDOW_TITLE') or 'BlueStacks'
+                    candidates = gw.getWindowsWithTitle(window_title)
                     win = next((w for w in candidates if w.width > 0 and w.height > 0 and not w.isMinimized), None)
                     if win is not None:
                         # Use window geometry
@@ -57,6 +68,33 @@ class Actions:
                         calibrated = True
                 except Exception:
                     calibrated = False
+
+            # If .env overrides for regions exist, prefer them
+            try:
+                f_tlx = os.getenv('FIELD_TOP_LEFT_X')
+                f_tly = os.getenv('FIELD_TOP_LEFT_Y')
+                f_brx = os.getenv('FIELD_BOTTOM_RIGHT_X')
+                f_bry = os.getenv('FIELD_BOTTOM_RIGHT_Y')
+                c_x = os.getenv('CARD_BAR_X')
+                c_y = os.getenv('CARD_BAR_Y')
+                c_w = os.getenv('CARD_BAR_WIDTH')
+                c_h = os.getenv('CARD_BAR_HEIGHT')
+                if all(v is not None for v in [f_tlx, f_tly, f_brx, f_bry, c_x, c_y, c_w, c_h]):
+                    self.TOP_LEFT_X = int(f_tlx)
+                    self.TOP_LEFT_Y = int(f_tly)
+                    self.BOTTOM_RIGHT_X = int(f_brx)
+                    self.BOTTOM_RIGHT_Y = int(f_bry)
+                    self.FIELD_AREA = (self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y)
+                    self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
+                    self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
+                    self.CARD_BAR_X = int(c_x)
+                    self.CARD_BAR_Y = int(c_y)
+                    self.CARD_BAR_WIDTH = int(c_w)
+                    self.CARD_BAR_HEIGHT = int(c_h)
+                    calibrated = True
+                    print("Using region overrides from .env")
+            except Exception as e:
+                print(f"Failed to apply .env region overrides: {e}")
 
             if not calibrated:
                 # Fallback to previous static coordinates
@@ -224,6 +262,9 @@ class Actions:
             width = int(0.30 * self.WIN_WIDTH)
             height = int(0.18 * self.WIN_HEIGHT)
             region = (left, top, width, height)
+        # Allow full-screen search via env override
+        if os.getenv('SEARCH_FULL_SCREEN', '0') == '1':
+            region = None
 
         # 3) Try to locate the button in the region (or full screen)
         for confidence in confidences:
@@ -329,6 +370,8 @@ class Actions:
             width = int(0.30 * self.WIN_WIDTH)
             height = int(0.20 * self.WIN_HEIGHT)
             region = (left, top, width, height)
+        if os.getenv('SEARCH_FULL_SCREEN', '0') == '1':
+            region = None
 
         for conf in confidences:
             print(f"Looking for OK button (confidence: {conf}) in region={region}")
