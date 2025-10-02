@@ -6,6 +6,7 @@ import platform
 import sys
 import cv2
 import numpy as np
+from dotenv import load_dotenv
 try:
     import pygetwindow as gw
 except Exception:
@@ -13,6 +14,11 @@ except Exception:
 
 class Actions:
     def __init__(self):
+        # Load environment variables (.env) early so Actions picks up config like FULLSCREEN, WINDOW_TITLE, etc.
+        try:
+            load_dotenv()
+        except Exception:
+            pass
         self.os_type = platform.system()
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.images_folder = os.path.join(self.script_dir, 'main_images')
