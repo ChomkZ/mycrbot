@@ -6,6 +6,7 @@ import threading
 from dotenv import load_dotenv
 from Actions import Actions
 from inference_sdk import InferenceHTTPClient
+import random
 
 # Load environment variables from .env file
 load_dotenv()
@@ -14,6 +15,15 @@ MAX_ENEMIES = 10
 MAX_ALLIES = 10
 
 SPELL_CARDS = ["Fireball", "Zap", "Arrows", "Tornado", "Rocket", "Lightning", "Freeze"]
+
+# Very rough elixir costs (fallback defaults to 4 if unknown)
+CARD_COSTS = {
+    # Spells
+    "Arrows": 3, "Zap": 2, "Fireball": 4, "Rocket": 6, "Lightning": 6, "Tornado": 3, "Freeze": 4,
+    # Common troops (examples; expand as your detector class names allow)
+    "Knight": 3, "Archers": 3, "Goblins": 2, "Spear Goblins": 2, "Skeletons": 1,
+    "Valkyrie": 4, "Musketeer": 4, "Mini P.E.K.K.A": 4, "Giant": 5, "Hog Rider": 4,
+}
 
 class ClashRoyaleEnv:
     def __init__(self):
@@ -41,6 +51,12 @@ class ClashRoyaleEnv:
         self.prev_enemy_princess_towers = None
 
         self.match_over_detected = False
+
+        # Heuristic assist: with some probability use a simple rule-based policy instead of RL action
+        try:
+            self.heuristic_assist_prob = float(os.getenv('HEURISTIC_ASSIST_PROB', '0.0'))
+        except Exception:
+            self.heuristic_assist_prob = 0.0
 
     def setup_roboflow(self):
         api_key = os.getenv('ROBOFLOW_API_KEY')
@@ -116,6 +132,16 @@ class ClashRoyaleEnv:
             next_state = self._get_state()
             return next_state, 0, False
 
+        # Optional heuristic override
+        if self.heuristic_assist_prob > 0 and random.random() < self.heuristic_assist_prob:
+            try:
+                h_idx = self._choose_heuristic_action()
+                if h_idx is not None:
+                    print(f"[HeuristicAssist] overriding action {action_index} -> {h_idx}")
+                    action_index = h_idx
+            except Exception as e:
+                print(f"Heuristic action selection failed: {e}")
+
         action = self.available_actions[action_index]
         card_index, x_frac, y_frac = action
         print(f"Action selected: card_index={card_index}, x_frac={x_frac:.2f}, y_frac={y_frac:.2f}")
@@ -158,6 +184,119 @@ class ClashRoyaleEnv:
         reward = self._compute_reward(self._get_state()) + spell_penalty + princess_tower_reward
         next_state = self._get_state()
         return next_state, reward, done
+
+    def get_action_mask(self, state):
+        """Return a boolean mask of shape [action_size] for valid actions.
+        Rules:
+        - If match over detected: only allow no-op
+        - Disallow playing cards that are Unknown
+        - Rough elixir gating: require at least 2 elixir to play any card (fallback until per-card costs available)
+        - Always allow no-op
+        """
+        import numpy as _np
+        mask = _np.zeros(self.action_size, dtype=bool)
+        # Always allow no-op
+        noop_index = self.action_size - 1
+        mask[noop_index] = True
+
+        # During match over only no-op
+        if self.match_over_detected:
+            return mask
+
+        try:
+            cards = self.detect_cards_in_hand()
+        except Exception:
+            cards = []
+
+        # If detection failed, be conservative
+        if not cards or all(c == "Unknown" for c in cards):
+            return mask
+
+        elixir = self.actions.count_elixir()
+
+        playable_card_slots = set()
+        for i, name in enumerate(cards):
+            if i >= self.num_cards or name == "Unknown":
+                continue
+            cost = CARD_COSTS.get(name, 4)
+            if elixir >= cost:
+                playable_card_slots.add(i)
+
+        # Set mask for all actions that use playable cards
+        for idx, (card_idx, _xf, _yf) in enumerate(self.available_actions[:-1]):
+            if card_idx in playable_card_slots:
+                mask[idx] = True
+
+        return mask
+
+    def _choose_heuristic_action(self):
+        """A simple rule-based policy to make the agent appear smarter before RL converges.
+        Strategy:
+        - Prefer playing non-Unknown, affordable cards
+        - If many enemies clustered, prefer an AoE spell (Arrows/Fireball/Zap) at their centroid on our side
+        - Otherwise play a troop towards closest enemy cluster on our side
+        Returns an action index or None if no good action.
+        """
+        try:
+            cards = self.current_cards or self.detect_cards_in_hand()
+        except Exception:
+            cards = []
+        if not cards:
+            return None
+
+        elixir = self.actions.count_elixir()
+        affordable_slots = [i for i, n in enumerate(cards[:self.num_cards]) if n != "Unknown" and elixir >= CARD_COSTS.get(n, 4)]
+        if not affordable_slots:
+            return None
+
+        # Extract enemy coordinates from the last computed state (capture fresh)
+        state = self._get_state()
+        if state is None:
+            return None
+        enemy_coords = []
+        start = 1 + 2 * MAX_ALLIES
+        for i in range(start, start + 2 * MAX_ENEMIES, 2):
+            ex = state[i]
+            ey = state[i + 1]
+            if ex != 0.0 or ey != 0.0:
+                enemy_coords.append((ex, ey))
+
+        # Default target cell: center of our half
+        target_xf, target_yf = 0.5, 0.70
+        if enemy_coords:
+            # Centroid of enemies; clamp to our half (y >= 0.55)
+            cx = sum(p[0] for p in enemy_coords) / len(enemy_coords)
+            cy = sum(p[1] for p in enemy_coords) / len(enemy_coords)
+            target_xf = max(0.1, min(0.9, cx))
+            target_yf = max(0.55, min(0.90, cy + 0.10))  # pull a bit towards us
+
+        # If enemy count large, prefer an AoE spell if available
+        enemy_count = len(enemy_coords)
+        spell_priority = ["Arrows", "Zap", "Fireball"]
+        slot_choice = None
+        if enemy_count >= 4:
+            for sname in spell_priority:
+                for i, n in enumerate(cards[:self.num_cards]):
+                    if n == sname and i in affordable_slots:
+                        slot_choice = i
+                        break
+                if slot_choice is not None:
+                    break
+        # Otherwise pick the first affordable non-Unknown slot
+        if slot_choice is None:
+            slot_choice = affordable_slots[0]
+
+        # Find nearest grid cell among available_actions for this slot
+        best_idx = None
+        best_dist = 1e9
+        for idx, (cidx, xf, yf) in enumerate(self.available_actions[:-1]):  # skip no-op
+            if cidx != slot_choice:
+                continue
+            d = (xf - target_xf) ** 2 + (yf - target_yf) ** 2
+            if d < best_dist:
+                best_dist = d
+                best_idx = idx
+        return best_idx
 
     def _get_state(self):
         self.actions.capture_area(self.screenshot_path)

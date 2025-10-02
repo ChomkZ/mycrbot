@@ -97,15 +97,13 @@ A Python-based Clash Royale AI bot that learns and improves through gameplay. Th
    ```sh
    git clone https://github.com/krazyness/CRBot-public.git
    ```
-3. Set up your environment variables:
-   - Copy `.env.example` to `.env`
-   - Edit `.env` and replace `your_roboflow_api_key_here` with your actual Roboflow private API key
-   ```bash
-   # Copy the example file
-   cp .env.example .env
-   
-   # Edit .env and add your API key
-   ROBOFLOW_API_KEY=your_actual_api_key_here
+3. Environment variables:
+   - Я уже создал у вас файл `.env` в корне. Если нужно изменить значения — отредактируйте его.
+   - Пример значений:
+   ```
+   ROBOFLOW_API_KEY=...your key...
+   WORKSPACE_TROOP_DETECTION=...your workspace...
+   WORKSPACE_CARD_DETECTION=...your workspace...
    ```
 4. Fork both workflows:
 [Troop Detection](https://app.roboflow.com/workflows/embed/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ3b3JrZmxvd0lkIjoiTEx3TjlnOEduenBjWmVYSktKYzEiLCJ3b3Jrc3BhY2VJZCI6Ik5vVUlkM3gyYWRSU0tqaURrM0ZMTzlBSmE1bzEiLCJ1c2VySWQiOiJOb1VJZDN4MmFkUlNLamlEazNGTE85QUphNW8xIiwiaWF0IjoxNzUzODgxNTcyfQ.-ZO7pqc3mBX6W49-uThUSBLdUaCRzM9I8exfEu6-lo8)
@@ -139,7 +137,12 @@ A Python-based Clash Royale AI bot that learns and improves through gameplay. Th
 
 ![BlueStacks-window-tutorial](https://media1.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3k2enMwY3E4cHJ0MDhnbmg1NnhsaDI3bGhmazJ4aXlxczFkamFxeSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/y8yXKqwN40cdcr4yR5/giphy.gif)
 
-13. Log in (or make a new) account on Clash Royale, click on battle, then run train.py, but immediately after, make sure the BlueStacks emulator is the front-most window.
+13. Log in (or make a new) account on Clash Royale, click on battle, then run `train.py`, но сразу после запуска убедитесь, что окно BlueStacks — на переднем плане.
+
+### Notes about the upgraded RL agent
+- Dueling Double DQN + Prioritized Replay (PER)
+- Маскирование действий: запрещает ходы без эликсира/с неизвестными картами/при окончании матча
+- Динамическая калибровка BlueStacks окна (900x1600), фолбэк — старые координаты
 
 **NOTE:** The bot is broken right now, with it not handling "play again" correctly, as well as some minor bugs in gameplay. You can ask me any questions at the contacts page, or make contributions at the contributing page!
 
