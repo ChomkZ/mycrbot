@@ -252,7 +252,7 @@ class Actions:
         # Ensure target is inside the field
         x, y = self._clamp_to_field(x, y)
 
-        mode = (os.getenv('PLACEMENT_MODE') or 'drag').lower()  # 'drag' (default) or 'tap'
+        mode = (os.getenv('PLACEMENT_MODE') or 'auto').lower()  # 'auto' (default), 'drag' or 'tap'
 
         # Compute card slot center for drag start
         try:
@@ -301,11 +301,15 @@ class Actions:
         try:
             if mode == 'tap':
                 do_tap()
-            else:
-                # Default: try drag; if fails, fallback to tap
+            elif mode == 'drag':
                 do_drag()
+            else:
+                # AUTO: try drag then tap to ensure drop
+                do_drag()
+                time.sleep(0.05)
+                do_tap()
         except Exception as e:
-            print(f"Drag placement failed with error: {e}; falling back to tap")
+            print(f"Placement encountered error: {e}; attempting tap fallback")
             do_tap()
 
     def click_battle_start(self):
