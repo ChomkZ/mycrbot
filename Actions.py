@@ -597,8 +597,13 @@ class Actions:
     def _auto_calibrate_card_bar(self):
         if not all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
             raise RuntimeError("Window geometry unknown")
-        # Search bottom 25% of the window for a purple (magenta) elixir bar
-        region = self._window_region_box(0.00, 0.75, 1.00, 0.25)
+        # Prefer searching for elixir bar INSIDE the field area (bottom band),
+        # to avoid false positives from taskbar/overlays in fullscreen mode.
+        field_left, field_top = self.TOP_LEFT_X, self.TOP_LEFT_Y
+        field_w, field_h = self.WIDTH, self.HEIGHT
+        # Bottom 35% of field
+        search_top = field_top + int(0.65 * field_h)
+        region = (field_left, search_top, field_w, field_h - (search_top - field_top))
         if region is None:
             raise RuntimeError("Failed to compute bottom region")
         img = self._grab_region(region)
@@ -612,7 +617,19 @@ class Actions:
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
-            raise RuntimeError("No purple regions found for elixir bar")
+            # Fallback: place card bar directly below the field
+            cx = self.WIN_LEFT + int(0.08 * self.WIN_WIDTH)
+            cw = int(0.84 * self.WIN_WIDTH)
+            card_h = int(max(self.WIN_HEIGHT * 0.10, 80))
+            card_h = min(card_h, int(self.WIN_HEIGHT * 0.20))
+            gap = int(max(6, self.WIN_HEIGHT * 0.008))
+            cy = self.BOTTOM_RIGHT_Y + gap
+            # Clamp inside window
+            cy = max(self.WIN_TOP, min(cy, self.WIN_TOP + self.WIN_HEIGHT - card_h))
+            cx = max(self.WIN_LEFT, min(cx, self.WIN_LEFT + self.WIN_WIDTH - cw))
+            self.CARD_BAR_X, self.CARD_BAR_Y, self.CARD_BAR_WIDTH, self.CARD_BAR_HEIGHT = cx, cy, cw, card_h
+            print("Elixir bar not found; using field-bottom derived CARD_BAR rect")
+            return
         # Choose the widest, low-lying contour as the elixir bar
         best = None
         best_score = -1
@@ -622,26 +639,40 @@ class Actions:
             # Score prefers wide, thin, near-bottom bars
             aspect = w / max(1.0, h)
             bottomness = (y + h) / H
+            # Filter unrealistic sizes (avoid taskbar/overlays): require width spanning >= 20% of field
+            if w < 0.20 * W:
+                continue
             score = aspect + 2.0 * bottomness
             if aspect > 3.0 and score > best_score:
                 best = (x, y, w, h)
                 best_score = score
         if best is None:
-            raise RuntimeError("Failed to localize elixir bar")
+            # Fallback: place card bar directly below the field
+            cx = self.WIN_LEFT + int(0.08 * self.WIN_WIDTH)
+            cw = int(0.84 * self.WIN_WIDTH)
+            card_h = int(max(self.WIN_HEIGHT * 0.10, 80))
+            card_h = min(card_h, int(self.WIN_HEIGHT * 0.20))
+            gap = int(max(6, self.WIN_HEIGHT * 0.008))
+            cy = self.BOTTOM_RIGHT_Y + gap
+            cy = max(self.WIN_TOP, min(cy, self.WIN_TOP + self.WIN_HEIGHT - card_h))
+            cx = max(self.WIN_LEFT, min(cx, self.WIN_LEFT + self.WIN_WIDTH - cw))
+            self.CARD_BAR_X, self.CARD_BAR_Y, self.CARD_BAR_WIDTH, self.CARD_BAR_HEIGHT = cx, cy, cw, card_h
+            print("Failed to localize elixir bar in field band; using field-bottom derived CARD_BAR rect")
+            return
 
         ex, ey, ew, eh = best
-        # Convert to absolute coords
+        # Convert to absolute coords relative to screen
         ex_abs = region[0] + ex
         ey_abs = region[1] + ey
 
-        # Derive card bar rect above elixir bar
-        # Heights tuned conservatively; adjust if needed
-        card_h = int(max(eh * 5.0, self.WIN_HEIGHT * 0.08))
-        card_h = min(card_h, int(self.WIN_HEIGHT * 0.16))
-        gap = int(max(4, eh * 0.4))
-        cy = ey_abs - gap - card_h
+        # Derive card bar rect BELOW the field (elixir bar sits above cards in CR).
+        card_h = int(max(self.WIN_HEIGHT * 0.10, 80))
+        card_h = min(card_h, int(self.WIN_HEIGHT * 0.20))
+        gap = int(max(6, eh * 0.5))
         cx = self.WIN_LEFT + int(0.08 * self.WIN_WIDTH)
         cw = int(0.84 * self.WIN_WIDTH)
+        # Start just below field bottom; if that would go beyond window, clamp.
+        cy = self.BOTTOM_RIGHT_Y + gap
 
         # Sanity clamp inside window
         cy = max(self.WIN_TOP, min(cy, self.WIN_TOP + self.WIN_HEIGHT - card_h))
@@ -651,4 +682,4 @@ class Actions:
         self.CARD_BAR_Y = cy
         self.CARD_BAR_WIDTH = cw
         self.CARD_BAR_HEIGHT = card_h
-        print(f"Auto-calibrated CARD_BAR rect: X={cx} Y={cy} W={cw} H={card_h}")
+        print(f"Auto-calibrated CARD_BAR rect (field-based): X={cx} Y={cy} W={cw} H={card_h}")
