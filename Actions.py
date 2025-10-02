@@ -3,6 +3,10 @@ import os
 from datetime import datetime
 import time
 import platform
+try:
+    import pygetwindow as gw
+except Exception:
+    gw = None
 
 class Actions:
     def __init__(self):
@@ -21,20 +25,49 @@ class Actions:
             self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
             self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
         elif self.os_type == "Windows": # windows
-            self.TOP_LEFT_X = 1376
-            self.TOP_LEFT_Y = 120
-            self.BOTTOM_RIGHT_X = 1838
-            self.BOTTOM_RIGHT_Y = 769
-            self.FIELD_AREA = (self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y)
-            
-            self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
-            self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
-            
-            # Add card bar coordinates for Windows
-            self.CARD_BAR_X = 1450
-            self.CARD_BAR_Y = 847
-            self.CARD_BAR_WIDTH = 1862 - 1450
-            self.CARD_BAR_HEIGHT = 971 - 847
+            # Prefer dynamic calibration from BlueStacks window (900x1600)
+            calibrated = False
+            if gw is not None:
+                try:
+                    candidates = gw.getWindowsWithTitle('BlueStacks')
+                    win = next((w for w in candidates if w.width > 0 and w.height > 0 and not w.isMinimized), None)
+                    if win is not None:
+                        # Use window geometry
+                        left, top, width, height = win.left, win.top, win.width, win.height
+                        # Field area: central portion
+                        self.TOP_LEFT_X = left + int(0.05 * width)
+                        self.TOP_LEFT_Y = top + int(0.12 * height)
+                        self.BOTTOM_RIGHT_X = left + int(0.95 * width)
+                        self.BOTTOM_RIGHT_Y = top + int(0.80 * height)
+                        self.FIELD_AREA = (self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y)
+                        self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
+                        self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
+
+                        # Card bar: bottom strip
+                        self.CARD_BAR_X = left + int(0.08 * width)
+                        self.CARD_BAR_Y = top + int(0.85 * height)
+                        self.CARD_BAR_WIDTH = int(0.84 * width)
+                        self.CARD_BAR_HEIGHT = int(0.11 * height)
+                        calibrated = True
+                except Exception:
+                    calibrated = False
+
+            if not calibrated:
+                # Fallback to previous static coordinates
+                self.TOP_LEFT_X = 1376
+                self.TOP_LEFT_Y = 120
+                self.BOTTOM_RIGHT_X = 1838
+                self.BOTTOM_RIGHT_Y = 769
+                self.FIELD_AREA = (self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y)
+
+                self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
+                self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
+
+                # Card bar coordinates fallback
+                self.CARD_BAR_X = 1450
+                self.CARD_BAR_Y = 847
+                self.CARD_BAR_WIDTH = 1862 - 1450
+                self.CARD_BAR_HEIGHT = 971 - 847
 
         # Card position to key mapping
         self.card_keys = {
@@ -96,14 +129,30 @@ class Actions:
                     print(f"Error locating {image_file}: {e}")
             return 0
         elif self.os_type == "Windows":
+            # Dynamic sampling along the elixir bar within the calibrated window region
             target = (225, 128, 229)
             tolerance = 80
-            count = 0
-            for x in range(1512, 1892, 38):
-                r, g, b = pyautogui.pixel(x, 989)
-                if (abs(r - target[0]) <= tolerance) and (abs(g - target[1]) <= tolerance) and (abs(b - target[2]) <= tolerance):
-                    count += 1
-            return count
+            try:
+                # Sample 10 points along a horizontal line near bottom of window
+                y = self.TOP_LEFT_Y + int(self.HEIGHT * 0.95)
+                x_start = self.TOP_LEFT_X + int(self.WIDTH * 0.15)
+                x_end = self.TOP_LEFT_X + int(self.WIDTH * 0.85)
+                steps = 10
+                xs = [x_start + i * (x_end - x_start) // (steps - 1) for i in range(steps)]
+                count = 0
+                for x in xs:
+                    r, g, b = pyautogui.pixel(x, y)
+                    if (abs(r - target[0]) <= tolerance) and (abs(g - target[1]) <= tolerance) and (abs(b - target[2]) <= tolerance):
+                        count += 1
+                return count
+            except Exception:
+                # Fallback to legacy static sampling
+                count = 0
+                for x in range(1512, 1892, 38):
+                    r, g, b = pyautogui.pixel(x, 989)
+                    if (abs(r - target[0]) <= tolerance) and (abs(g - target[1]) <= tolerance) and (abs(b - target[2]) <= tolerance):
+                        count += 1
+                return count
         else:
             return 0
 
