@@ -78,6 +78,13 @@ class Actions:
                         self.CARD_BAR_Y = top + int(0.85 * height)
                         self.CARD_BAR_WIDTH = int(0.84 * width)
                         self.CARD_BAR_HEIGHT = int(0.11 * height)
+                        # Try auto-calibrate card bar using the elixir bar color if possible
+                        try:
+                            self._auto_calibrate_card_bar()
+                            calibrated = True
+                            print("Auto-calibrated card bar via elixir bar detection")
+                        except Exception as e:
+                            print(f"Auto-calibration of card bar failed, keeping defaults: {e}")
                         calibrated = True
                 except Exception:
                     calibrated = False
@@ -173,7 +180,12 @@ class Actions:
         # Split into 4 individual card images
         for i in range(4):
             left = i * card_width
-            card_img = screenshot.crop((left, 0, left + card_width, self.CARD_BAR_HEIGHT))
+            # Trim small margins to avoid borders/gaps between cards
+            margin = max(2, int(card_width * 0.04))
+            c_left = max(0, left + margin)
+            c_right = min(self.CARD_BAR_WIDTH, left + card_width - margin)
+            vmargin = max(2, int(self.CARD_BAR_HEIGHT * 0.06))
+            card_img = screenshot.crop((c_left, vmargin, c_right, self.CARD_BAR_HEIGHT - vmargin))
             save_path = os.path.join(self.script_dir, 'screenshots', f"card_{i+1}.png")
             card_img.save(save_path)
             cards.append(save_path)
@@ -538,3 +550,63 @@ class Actions:
                 pyautogui.click()
                 return True
         return False
+
+    # ======== Auto calibration via elixir bar detection ========
+    def _auto_calibrate_card_bar(self):
+        if not all(v is not None for v in [self.WIN_LEFT, self.WIN_TOP, self.WIN_WIDTH, self.WIN_HEIGHT]):
+            raise RuntimeError("Window geometry unknown")
+        # Search bottom 25% of the window for a purple (magenta) elixir bar
+        region = self._window_region_box(0.00, 0.75, 1.00, 0.25)
+        if region is None:
+            raise RuntimeError("Failed to compute bottom region")
+        img = self._grab_region(region)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        # Purple/magenta ranges in OpenCV HSV (0..179)
+        lower1 = np.array([125, 60, 60], dtype=np.uint8)
+        upper1 = np.array([165, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower1, upper1)
+        # Morph close to fill gaps
+        kernel = np.ones((5, 15), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            raise RuntimeError("No purple regions found for elixir bar")
+        # Choose the widest, low-lying contour as the elixir bar
+        best = None
+        best_score = -1
+        H, W = mask.shape
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            # Score prefers wide, thin, near-bottom bars
+            aspect = w / max(1.0, h)
+            bottomness = (y + h) / H
+            score = aspect + 2.0 * bottomness
+            if aspect > 3.0 and score > best_score:
+                best = (x, y, w, h)
+                best_score = score
+        if best is None:
+            raise RuntimeError("Failed to localize elixir bar")
+
+        ex, ey, ew, eh = best
+        # Convert to absolute coords
+        ex_abs = region[0] + ex
+        ey_abs = region[1] + ey
+
+        # Derive card bar rect above elixir bar
+        # Heights tuned conservatively; adjust if needed
+        card_h = int(max(eh * 5.0, self.WIN_HEIGHT * 0.08))
+        card_h = min(card_h, int(self.WIN_HEIGHT * 0.16))
+        gap = int(max(4, eh * 0.4))
+        cy = ey_abs - gap - card_h
+        cx = self.WIN_LEFT + int(0.08 * self.WIN_WIDTH)
+        cw = int(0.84 * self.WIN_WIDTH)
+
+        # Sanity clamp inside window
+        cy = max(self.WIN_TOP, min(cy, self.WIN_TOP + self.WIN_HEIGHT - card_h))
+        cx = max(self.WIN_LEFT, min(cx, self.WIN_LEFT + self.WIN_WIDTH - cw))
+
+        self.CARD_BAR_X = cx
+        self.CARD_BAR_Y = cy
+        self.CARD_BAR_WIDTH = cw
+        self.CARD_BAR_HEIGHT = card_h
+        print(f"Auto-calibrated CARD_BAR rect: X={cx} Y={cy} W={cw} H={card_h}")
