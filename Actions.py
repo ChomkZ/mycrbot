@@ -51,7 +51,43 @@ class Actions:
         elif self.os_type == "Windows": # windows
             # Prefer dynamic calibration from BlueStacks window (900x1600)
             calibrated = False
-            if gw is not None:
+            # FULLSCREEN mode: treat the entire primary display as the window
+            try:
+                fullscreen = (os.getenv('FULLSCREEN', '0') == '1')
+            except Exception:
+                fullscreen = False
+
+            if fullscreen:
+                try:
+                    screen_w, screen_h = pyautogui.size()
+                    self.WIN_LEFT, self.WIN_TOP = 0, 0
+                    self.WIN_WIDTH, self.WIN_HEIGHT = int(screen_w), int(screen_h)
+                    # Field area: central portion of the screen
+                    self.TOP_LEFT_X = self.WIN_LEFT + int(0.05 * self.WIN_WIDTH)
+                    self.TOP_LEFT_Y = self.WIN_TOP + int(0.12 * self.WIN_HEIGHT)
+                    self.BOTTOM_RIGHT_X = self.WIN_LEFT + int(0.95 * self.WIN_WIDTH)
+                    self.BOTTOM_RIGHT_Y = self.WIN_TOP + int(0.80 * self.WIN_HEIGHT)
+                    self.FIELD_AREA = (self.TOP_LEFT_X, self.TOP_LEFT_Y, self.BOTTOM_RIGHT_X, self.BOTTOM_RIGHT_Y)
+                    self.WIDTH = self.BOTTOM_RIGHT_X - self.TOP_LEFT_X
+                    self.HEIGHT = self.BOTTOM_RIGHT_Y - self.TOP_LEFT_Y
+
+                    # Initial card bar guess (will be refined by auto-calibration)
+                    self.CARD_BAR_X = self.WIN_LEFT + int(0.08 * self.WIN_WIDTH)
+                    self.CARD_BAR_Y = self.WIN_TOP + int(0.85 * self.WIN_HEIGHT)
+                    self.CARD_BAR_WIDTH = int(0.84 * self.WIN_WIDTH)
+                    self.CARD_BAR_HEIGHT = int(0.11 * self.WIN_HEIGHT)
+                    try:
+                        self._auto_calibrate_card_bar()
+                        print("Fullscreen mode: auto-calibrated card bar via elixir bar detection")
+                    except Exception as e:
+                        print(f"Fullscreen: auto-calibration failed, keeping defaults: {e}")
+                    calibrated = True
+                    print("Fullscreen mode enabled (using entire primary display)")
+                except Exception as e:
+                    print(f"Failed to enable fullscreen mode: {e}")
+                    calibrated = False
+
+            if (not calibrated) and gw is not None:
                 try:
                     window_title = os.getenv('WINDOW_TITLE') or 'BlueStacks'
                     candidates = gw.getWindowsWithTitle(window_title)
