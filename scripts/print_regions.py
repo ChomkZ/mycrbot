@@ -1,4 +1,7 @@
 import os
+import sys
+# Ensure repository root is on sys.path for importing Actions
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from Actions import Actions
 
 

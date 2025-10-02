@@ -1,5 +1,8 @@
 import os
+import sys
 import json
+# Ensure repository root is on sys.path
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from env import ClashRoyaleEnv
 
 
