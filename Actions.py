@@ -264,24 +264,39 @@ class Actions:
 
         def do_drag():
             # Drag from the card slot position to the target on the field
+            drag_move_dur = float(os.getenv('DRAG_MOVE_DURATION', '0.25'))
+            pre_hold = float(os.getenv('DRAG_PRE_HOLD', '0.06'))
+            post_hold = float(os.getenv('DRAG_POST_HOLD', '0.04'))
+            mid_offset = int(os.getenv('DRAG_MID_OFFSET', '12'))
             print(f"Dragging from slot ({slot_cx}, {slot_cy}) to ({x}, {y})")
-            pyautogui.moveTo(slot_cx, slot_cy, duration=0.12)
+            pyautogui.moveTo(slot_cx, slot_cy, duration=0.10)
             pyautogui.mouseDown()
-            pyautogui.dragTo(x, y, duration=0.20)
+            time.sleep(pre_hold)
+            # Nudge slightly to ensure drag starts
+            pyautogui.moveTo(slot_cx, slot_cy - mid_offset, duration=0.08)
+            # Main drag
+            pyautogui.dragTo(x, y, duration=drag_move_dur)
+            time.sleep(post_hold)
             pyautogui.mouseUp()
             time.sleep(0.05)
 
         def do_tap():
-            # Select by hotkey then tap on field
-            if card_index in self.card_keys:
+            # Prefer clicking the slot to select, then tap on field
+            tap_select = (os.getenv('TAP_SELECT_METHOD') or 'slot').lower()  # 'slot' or 'key'
+            if tap_select == 'key' and card_index in self.card_keys:
                 key = self.card_keys[card_index]
                 print(f"Selecting card via key: {key}")
                 pyautogui.press(key)
+                time.sleep(0.10)
+            else:
+                print(f"Selecting card by clicking slot center ({slot_cx}, {slot_cy})")
+                pyautogui.moveTo(slot_cx, slot_cy, duration=0.08)
+                pyautogui.mouseDown(); time.sleep(0.02); pyautogui.mouseUp()
                 time.sleep(0.08)
             print(f"Clicking field at ({x}, {y})")
-            pyautogui.moveTo(x, y, duration=0.10)
+            pyautogui.moveTo(x, y, duration=0.12)
             pyautogui.click()
-            time.sleep(0.04)
+            time.sleep(0.05)
 
         try:
             if mode == 'tap':
